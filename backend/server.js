@@ -2,23 +2,29 @@
 import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
-import cors from "cors";
+import cors from "cors"; // Import cors
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { createServer } from 'http'; // Import for socket.io
-import { Server } from 'socket.io';   // Import for socket.io
+import { createServer } from 'http'; 
+import { Server } from 'socket.io';   
 
 dotenv.config();
 
 const app = express();
+
+// --- THIS IS THE FIX ---
+// This allows requests from ALL origins (e.g., localhost, Vercel, etc.)
+// It's the simplest way to solve the "not working" issue.
 app.use(cors());
+// --- END OF FIX ---
+
 app.use(express.json());
 
 // --- Socket.io Setup ---
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: "http://localhost:5173", // Your frontend URL
+    origin: "*", // Also allow all origins for sockets
     methods: ["GET", "POST"]
   }
 });
@@ -26,7 +32,6 @@ const io = new Server(httpServer, {
 io.on('connection', (socket) => {
   console.log(`✅ User connected: ${socket.id}`);
   
-  // Join a room based on user ID
   socket.on('join_room', (userId) => {
     socket.join(userId);
     console.log(`User ${socket.id} joined room ${userId}`);
@@ -166,7 +171,6 @@ app.put("/api/events/:id", authenticateToken, async (req, res) => {
     const oldStatus = event.status;
     if (oldStatus === newStatus) return res.json(event);
 
-    // If user changes status from PENDING back to BUSY or SWAPPABLE (i.e., cancels)
     if (oldStatus === 'SWAP_PENDING' && (newStatus === 'BUSY' || newStatus === 'SWAPPABLE')) {
       
       const swap = await SwapRequest.findOne({
@@ -175,26 +179,20 @@ app.put("/api/events/:id", authenticateToken, async (req, res) => {
       });
 
       if (swap) {
-        // Set both events involved back to SWAPPABLE
         await Event.updateMany(
           { _id: { $in: [swap.requesterSlotId, swap.targetSlotId] } },
           { status: 'SWAPPABLE' }
         );
         
-        // Delete the request
         await SwapRequest.findByIdAndDelete(swap._id);
 
-        // Re-fetch our event (which is now SWAPPABLE)
         const myEvent = await Event.findById(req.params.id);
-        
-        // Set its status to what the user actually requested (BUSY or SWAPPABLE)
         myEvent.status = newStatus;
         await myEvent.save();
         return res.json(myEvent);
       }
     }
 
-    // Standard status update
     event.status = newStatus;
     await event.save();
     res.json(event);
@@ -215,12 +213,10 @@ app.delete("/api/events/:id", authenticateToken, async (req, res) => {
       return res.status(400).json({ error: "Cannot delete event with a pending swap. Please cancel/reject the swap first." });
     }
     
-    // Delete any swap requests (past or present) associated with this event
     await SwapRequest.deleteMany({
       $or: [{ requesterSlotId: event._id }, { targetSlotId: event._id }]
     });
 
-    // Delete the event
     await Event.findByIdAndDelete(req.params.id);
     
     res.json({ message: "Event deleted successfully" });
@@ -238,81 +234,100 @@ app.get("/api/swappable-slots", authenticateToken, async (req, res) => {
 
 // Swap Request
 app.post("/api/swap-request", authenticateToken, async (req, res) => {
-  const { mySlotId, theirSlotId } = req.body;
-  const mySlot = await Event.findById(mySlotId);
-  const theirSlot = await Event.findById(theirSlotId);
-  if (!mySlot || !theirSlot) return res.status(404).json({ error: "Slots not found" });
+  try {
+    const { mySlotId, theirSlotId } = req.body;
+    const mySlot = await Event.findById(mySlotId);
+    const theirSlot = await Event.findById(theirSlotId);
+    if (!mySlot || !theirSlot) return res.status(404).json({ error: "Slots not found" });
 
-  const request = await SwapRequest.create({
-    requesterId: req.user.id,
-    requesterSlotId: mySlotId,
-    targetUserId: theirSlot.userId,
-    targetSlotId: theirSlotId,
-  });
+    const request = await SwapRequest.create({
+      requesterId: req.user.id,
+      requesterSlotId: mySlotId,
+      targetUserId: theirSlot.userId,
+      targetSlotId: theirSlotId,
+    });
 
-  await Event.updateMany({ _id: { $in: [mySlotId, theirSlotId] } }, { status: "SWAP_PENDING" });
-  
-  // --- Emit WebSocket Event ---
-  const targetUserId = theirSlot.userId.toString();
-  // We need to get the requester's name to send
-  const requester = await User.findById(req.user.id);
-  
-  io.to(targetUserId).emit("new_request", {
-    message: `You have a new swap request from ${requester.name || 'a user'}` 
-  });
-  
-  res.status(201).json(request);
+    await Event.updateMany({ _id: { $in: [mySlotId, theirSlotId] } }, { status: "SWAP_PENDING" });
+    
+    const targetUserId = theirSlot.userId.toString();
+    const requester = await User.findById(req.user.id);
+    
+    io.to(targetUserId).emit("new_request", {
+      message: `You have a new swap request from ${requester.name || 'a user'}` 
+    });
+    
+    res.status(201).json(request);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to create swap request' });
+  }
 });
 
 // My Requests
 app.get("/api/swap-requests", authenticateToken, async (req, res) => {
-  // Populate all necessary fields for the frontend
-  const incoming = await SwapRequest.find({ targetUserId: req.user.id })
-    .populate("requesterId", "name")
-    .populate("requesterSlotId", "title startTime _id")
-    .populate("targetSlotId", "title startTime _id");
-    
-  const outgoing = await SwapRequest.find({ requesterId: req.user.id })
-    .populate("targetUserId", "name")
-    .populate("requesterSlotId", "title startTime _id")
-    .populate("targetSlotId", "title startTime _id");
-    
-  res.json({ incoming, outgoing });
+  try {
+    const incoming = await SwapRequest.find({ targetUserId: req.user.id })
+      .populate("requesterId", "name")
+      .populate("requesterSlotId", "title startTime _id")
+      .populate("targetSlotId", "title startTime _id");
+      
+    const outgoing = await SwapRequest.find({ requesterId: req.user.id })
+      .populate("targetUserId", "name")
+      .populate("requesterSlotId", "title startTime _id")
+      .populate("targetSlotId", "title startTime _id");
+      
+    res.json({ incoming, outgoing });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to get swap requests' });
+  }
 });
 
 // Respond to Swap
 app.post("/api/swap-response/:id", authenticateToken, async (req, res) => {
-  const { accept } = req.body;
-  const swap = await SwapRequest.findOne({ _id: req.params.id, targetUserId: req.user.id });
-  if (!swap) return res.status(404).json({ error: "Swap not found" });
+  try {
+    const { accept } = req.body;
+    const swap = await SwapRequest.findOne({ _id: req.params.id, targetUserId: req.user.id });
+    if (!swap) return res.status(404).json({ error: "Swap not found" });
 
-  if (accept) {
-    const slot1 = await Event.findById(swap.requesterSlotId);
-    const slot2 = await Event.findById(swap.targetSlotId);
+    if (accept) {
+      const slot1 = await Event.findById(swap.requesterSlotId);
+      const slot2 = await Event.findById(swap.targetSlotId);
 
-    const tempUser = slot1.userId;
-    slot1.userId = slot2.userId;
-    slot2.userId = tempUser;
+      // Handle edge case where one of the slots was deleted
+      if (!slot1 || !slot2) {
+        if (!slot1) await Event.findByIdAndUpdate(swap.targetSlotId, { status: 'SWAPPABLE' });
+        if (!slot2) await Event.findByIdAndUpdate(swap.requesterSlotId, { status: 'SWAPPABLE' });
+        await SwapRequest.findByIdAndDelete(swap._id);
+        return res.status(404).json({ error: "One of the slots no longer exists. Request canceled." });
+      }
 
-    slot1.status = slot2.status = "BUSY";
-    await slot1.save();
-    await slot2.save();
+      const tempUser = slot1.userId;
+      slot1.userId = slot2.userId;
+      slot2.userId = tempUser;
 
-    swap.status = "ACCEPTED";
-  } else {
-    await Event.updateMany({ _id: { $in: [swap.requesterSlotId, swap.targetSlotId] } }, { status: "SWAPPABLE" });
-    swap.status = "REJECTED";
+      slot1.status = slot2.status = "BUSY";
+      await slot1.save();
+      await slot2.save();
+
+      swap.status = "ACCEPTED";
+    } else {
+      await Event.updateMany({ _id: { $in: [swap.requesterSlotId, swap.targetSlotId] } }, { status: "SWAPPABLE" });
+      swap.status = "REJECTED";
+    }
+
+    await swap.save();
+
+    const requesterId = swap.requesterId.toString();
+    io.to(requesterId).emit("request_response", {
+      message: `Your swap request was ${swap.status.toLowerCase()}`
+    });
+    
+    res.json({ message: accept ? "Swap accepted" : "Swap rejected", swap });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to respond to swap' });
   }
-
-  await swap.save();
-
-  // --- Emit WebSocket Event ---
-  const requesterId = swap.requesterId.toString();
-  io.to(requesterId).emit("request_response", {
-    message: `Your swap request was ${swap.status.toLowerCase()}`
-  });
-  
-  res.json({ message: accept ? "Swap accepted" : "Swap rejected", swap });
 });
 
 // ====================
