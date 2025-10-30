@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import io, { Socket } from 'socket.io-client';
 import { AuthContext, IAuthContext } from './AuthContext';
-import { toast } from 'react-hot-toast'; // <-- IMPORTED TOAST
+import { toast } from 'react-hot-toast'; 
 
 interface ISocketContext {
   socket: Socket | null;
@@ -21,6 +21,11 @@ export const useSocket = () => {
   return context;
 };
 
+// --- THIS IS THE FIX ---
+// We read from the .env variable, with a fallback to localhost for safety.
+const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
+// -----------------------
+
 export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [notifications, setNotifications] = useState<string[]>([]);
@@ -34,7 +39,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   useEffect(() => {
     if (user) {
-      const newSocket = io('http://localhost:5000');
+      // Use the new dynamic socketUrl variable
+      const newSocket = io(socketUrl); 
+      
       newSocket.emit('join_room', user._id);
       setSocket(newSocket);
 
@@ -42,7 +49,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setNotifications(prev => [data.message, ...prev.slice(0, 4)]);
         setHasUnread(true);
         setLastUpdate(Date.now());
-        toast.success(data.message); // <-- SHOWS TOAST ON EVENT
+        toast.success(data.message); 
       };
 
       newSocket.on('new_request', handleNewNotification);
