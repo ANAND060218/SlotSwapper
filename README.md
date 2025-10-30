@@ -14,7 +14,7 @@ Live Application Links
 
 You can test the live, deployed application here:
 
-Frontend (Vercel): https://slotswapper-frontend-gilt.vercel.app/
+Frontend (Vercel):(https://slot-swapper-n4w1.vercel.app/)
 
 Backend (Render): https://slotswapper-exq5.onrender.com/api/health
 
