@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  # 1. Backend Service (Node.js/Express)
+  backend:
+    build: ./backend
+    container_name: slotswapper-backend
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      # Use the MongoDB service we define below
+      MONGO_URL: mongodb://mongo:27017/slotswapper
+      JWT_SECRET: your-super-secret-key-for-docker
+    depends_on:
+      - mongo
+
+  # 2. Frontend Service (React/Nginx)
+  frontend:
+    build: ./frontend
+    container_name: slotswapper-frontend
+    restart: always
+    ports:
+      - "5173:80" # Map host 5173 to container port 80
+    depends_on:
+      - backend
+
+  # 3. MongoDB Database Service
+  mongo:
+    image: mongo:latest
+    container_name: slotswapper-db
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+volumes:
+  # Persists database data even if the container stops
+  mongo-data:
