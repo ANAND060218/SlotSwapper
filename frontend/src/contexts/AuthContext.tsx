@@ -12,29 +12,35 @@ export interface IUser {
 export interface IAuthContext {
   user: IUser | null;
   token: string | null;
+  isAuthReady: boolean; // <-- 1. ADD THIS
   login: (tokenValue: string, userObj: IUser) => void;
   logout: () => void;
 }
 
 export const AuthContext = createContext<IAuthContext | null>(null)
-export const useAuth = () => {
-  const context = React.useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
-  return context;
-};
+
 export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }) => {
   const [user, setUser] = useState<IUser | null>(null)
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'))
+  const [isAuthReady, setIsAuthReady] = useState(false); // <-- 2. ADD THIS
 
   useEffect(() => {
-    if (token) {
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
-      api.defaults.headers.common['Authorization'] = `Bearer ${token}`
-    } else {
-      delete axios.defaults.headers.common['Authorization']
-      delete api.defaults.headers.common['Authorization']
+    try {
+      if (token) {
+        axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
+        api.defaults.headers.common['Authorization'] = `Bearer ${token}`
+        // We assume if a token exists, the user is "logged in" for this context
+        // A full app might fetch a /me route here to verify the token
+      } else {
+        delete axios.defaults.headers.common['Authorization']
+        delete api.defaults.headers.common['Authorization']
+      }
+    } catch (e) {
+      console.error("Auth setup failed", e);
+      setToken(null);
+      localStorage.removeItem('token');
+    } finally {
+      setIsAuthReady(true); // <-- 3. MARK AUTH AS READY
     }
   }, [token])
 
@@ -50,5 +56,9 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
     localStorage.removeItem('token')
   }
 
-  return <AuthContext.Provider value={{ user, token, login, logout }}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider value={{ user, token, isAuthReady, login, logout }}> {/* <-- 4. PASS IT */}
+      {children}
+    </AuthContext.Provider>
+  )
 }

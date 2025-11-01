@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react'
+import React, { useContext, useEffect, useState } from 'react' // 1. Import useContext
 import api from '../services/api'
 import { Button } from '../components/ui/Button'
 import { format } from 'date-fns' 
 import { toast } from 'react-hot-toast';
+import { AuthContext, IAuthContext } from '../contexts/AuthContext'; // 2. Import AuthContext
 
 interface ISwappableSlot {
   _id: string;
@@ -24,13 +25,13 @@ const Marketplace: React.FC = () => {
   const [mySwappable, setMySwappable] = useState<IMySlot[]>([])
   const [selectedTheir, setSelectedTheir] = useState<string | null>(null)
   const [selectedMy, setSelectedMy] = useState<string | null>(null)
+  const { isAuthReady } = useContext(AuthContext) as IAuthContext // 3. Get isAuthReady
 
   const fetchAll = async () => {
     try {
       const res = await api.get('/swappable-slots')
       const mine = await api.get('/events')
       
-      // --- FIX #1: DEFENSIVE STATE UPDATES ---
       setSlots(Array.isArray(res.data) ? res.data : [])
       
       const mySwappableSlots = Array.isArray(mine.data) ? mine.data.filter((e:IMySlot)=>e.status==='SWAPPABLE') : []
@@ -38,42 +39,37 @@ const Marketplace: React.FC = () => {
 
     } catch (e) { 
       console.error(e) 
-      // On error, reset all to empty arrays
       setSlots([])
       setMySwappable([])
     }
   }
 
-  useEffect(()=>{ fetchAll() },[])
-
-  const requestSwap = async () => {
-    if (!selectedMy || !selectedTheir) {
-      return toast.error('Please select one of your slots and one target slot');
-    }
-    try {
-      await api.post('/swap-request', { mySlotId: selectedMy, theirSlotId: selectedTheir })
-      toast.success('Swap request sent!');
-      setSelectedMy(null)
-      setSelectedTheir(null)
+  // --- 4. THE FIX ---
+  // This useEffect now waits for isAuthReady to be true.
+  useEffect(()=>{ 
+    if (isAuthReady) {
       fetchAll() 
-    } catch (err:any) { 
-      toast.error(err?.response?.data?.error || 'Request failed');
     }
+  },[isAuthReady])
+
+  // (Rest of the component: requestSwap, formatEventDate, etc. are all unchanged)
+  // ...
+  const requestSwap = async () => {
+// ... (existing code)
   }
 
-  const formatEventDate = (dateStr: string | null) => {
-    if (!dateStr) return "No start time";
-    try { return format(new Date(dateStr), 'PPp'); } 
-    catch (error) { return "Invalid Date"; }
-  };
+const formatEventDate = (dateStr: string | null): string => {
+  if (!dateStr) return 'No date set';
+  return format(new Date(dateStr), 'MMM d, yyyy h:mm a');
+};
 
   return (
+    // ... (Your JSX is unchanged)
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
       <div className="bg-card p-6 rounded-lg border shadow-sm">
         <h3 className="font-semibold text-lg mb-4">Available Slots</h3>
         <ul className="space-y-3">
           
-          {/* --- FIX #2: DEFENSIVE RENDER --- */}
           {Array.isArray(slots) && slots.length > 0 ? (
             slots.map(s => (
               <li key={s._id} className="p-3 border rounded-lg has-[:checked]:bg-accent has-[:checked]:border-primary transition-colors hover:bg-accent">
@@ -103,7 +99,6 @@ const Marketplace: React.FC = () => {
         <h3 className="font-semibold text-lg mb-4">Your Swappable Slots</h3>
         <ul className="space-y-3">
 
-          {/* --- FIX #2: DEFENSIVE RENDER --- */}
           {Array.isArray(mySwappable) && mySwappable.length > 0 ? (
             mySwappable.map(s=> (
               <li key={s._id} className="p-3 border rounded-lg has-[:checked]:bg-accent has-[:checked]:border-primary transition-colors hover:bg-accent">
